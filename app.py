@@ -503,14 +503,11 @@ app.layout = dbc.Container([
     #'CACHE_REDIS_URL': redis_connection_string  # Use the connection string directly
 #})
 
-# Configure cache
-app.config.update({
+# Configure cache - You specify cache type and cache configuration directly when initializing the Cache object
+cache = Cache(app.server, config={
     'CACHE_TYPE': 'redis',
-    'CACHE_REDIS_URL': 'redis://red-cn17imv109ks73cdqgj0:6379',  
+    'CACHE_REDIS_URL': 'redis://red-cn17imv109ks73cdqgj0:6379'  # Use your actual Redis URL
 })
-
-# Initialize cache
-cache = Cache(app)
 
 # Callbacks para actualizar menús y gráficos
 @app.callback(

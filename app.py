@@ -502,7 +502,7 @@ app.layout = dbc.Container([
     #'CACHE_TYPE': 'RedisCache',
     #'CACHE_REDIS_URL': redis_connection_string  # Use the connection string directly
 #})
-
+server = app.server
 # Configure cache - You specify cache type and cache configuration directly when initializing the Cache object
 cache = Cache(app.server, config={
     'CACHE_TYPE': 'redis',

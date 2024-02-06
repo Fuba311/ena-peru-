@@ -388,6 +388,10 @@ app.layout = dbc.Container([
                 options=[
                     {'label': 'Producción - Uso y Destinos de Venta', 'value': 'prod_uso_venta'},
                     {'label': 'Pérdidas de Cultivos y Jornaleros', 'value': 'cultivo_losses'},
+                    {'label': 'Servicios Financieros', 'value': 'servicios_financieros'},
+                    {'label': 'Asociatividad', 'value': 'asociatividad'},
+                    {'label': 'Uso de insumos', 'value': 'uso_insumos'},
+                    {'label': 'Capacitación y Asistencia Técnica', 'value': 'capacitacion_asistencia'},
                     {'label': 'Maquinaria y Equipos Agrícolas', 'value': 'maquinaria_equipos'}
 
                 ],
@@ -401,6 +405,7 @@ app.layout = dbc.Container([
         [
             dbc.Row([dbc.Col(dcc.Graph(id='cultivo-pie-chart'), width=12, className="mb-4")]),
             dbc.Row([dbc.Col(dcc.Graph(id='selling-vs-non-selling-chart'), width=12, className="mb-4")]),
+            dbc.Row([dbc.Col(dcc.Graph(id='ventas-chacra-pie-chart'), width=12)], className="mb-4"),
             dbc.Row([dbc.Col(dcc.Graph(id='ventas-entidad-bar-chart'), width=12)], className="mb-4"),
             dbc.Row([dbc.Col(dcc.Graph(id='destino-produccion-bar-chart'), width=12)], className="mb-4"),
             dbc.Row([dbc.Col(dcc.Graph(id='sales-proportion-table'), width=12)], className="mb-4"),
@@ -410,6 +415,54 @@ app.layout = dbc.Container([
         id="collapse"
     ),
 
+
+    # Add the new graph in the corresponding dbc.Collapse section
+    dbc.Collapse(
+        [
+            dbc.Row([dbc.Col(dcc.Graph(id='acceso-credito-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='obtencion-credito-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='entidad-credito-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='razones-rechazo-credito-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='seguro-agricola-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='proveedor-seguro-chart'), width=12)], className="mb-4")
+        ],
+        id="acceso-credito-collapse"
+    ),
+
+    dbc.Collapse(
+        [
+            dbc.Row([dbc.Col(dcc.Graph(id='asociatividad-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='razones-no-asociatividad-chart'), width=12)], className="mb-4")
+        ],
+        id="asociatividad-collapse"
+    ),
+
+    dbc.Collapse(
+        dbc.Row([
+            dbc.Col([
+                dcc.Dropdown(
+                    id='insumos-selection-dropdown',
+                    options=[
+                        {'label': 'Abono', 'value': 'P301A_13'},
+                        {'label': 'Fertilizante', 'value': 'P301A_14'},
+                        {'label': 'Plaguicida', 'value': 'P301A_15'}
+                    ],
+                    multi=True,
+                    placeholder="Selecciona insumos"
+                ),
+                dcc.Graph(id='insumos-usage-chart')
+            ], width=12)
+        ]),
+        id='insumos-collapse'
+    ),
+
+    dbc.Collapse(
+        [
+            dbc.Row([dbc.Col(dcc.Graph(id='capacitacion-chart'), width=12)], className="mb-4"),
+            dbc.Row([dbc.Col(dcc.Graph(id='asistencia-chart'), width=12)], className="mb-4")
+        ],
+        id="capacitacion-collapse"
+    ),
 
     dbc.Collapse(
         [
@@ -578,6 +631,74 @@ def update_chart(selected_departamento, selected_provincia, selected_distrito, s
         return fig
 
 
+# Callbacks para gráficos nuevos
+@app.callback(
+    Output('ventas-chacra-pie-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('cultivo-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_ventas_chacra_chart(selected_departamento, selected_provincia, selected_distrito, selected_cultivo,
+                               toggle_state, region):
+    filtered_df = df.copy()
+    if selected_departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == selected_departamento]
+    if selected_provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == selected_provincia]
+    if selected_distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == selected_distrito]
+    if selected_cultivo:
+        filtered_df = filtered_df[filtered_df['P204_NOM'] == selected_cultivo]
+    if region:  # Filter based on selected 'REGION'
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+
+    # Group by unique production units
+    unique_productions = filtered_df.groupby(['CONGLOMERADO', 'NSELUA', 'UA'])['Total_Ha'].first().reset_index()
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            # Select units within the current hectare range
+            range_productions = unique_productions[
+                (unique_productions['Total_Ha'] >= lower) & (unique_productions['Total_Ha'] < upper)]
+            # Merge back to the main DataFrame to get ventas data for selected units
+            range_df = pd.merge(range_productions, filtered_df, on=['CONGLOMERADO', 'NSELUA', 'UA'], how='left')
+            venta_dentro_chacra_ton, venta_fuera_chacra_ton = calcular_ventas_chacra(range_df)
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'Dentro de la Chacra': venta_dentro_chacra_ton,
+                'Fuera de la Chacra': venta_fuera_chacra_ton
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['Dentro de la Chacra', 'Fuera de la Chacra'],
+            title="Ventas Dentro y Fuera de la Chacra por Rango de Hectáreas",
+            text_auto=True
+        )
+        fig.update_layout(barmode='stack')
+        return fig
+    else:
+        # Regular pie chart logic (existing code)
+        venta_dentro_chacra_ton, venta_fuera_chacra_ton = calcular_ventas_chacra(filtered_df)
+        data = {
+            'Lugar de Venta': ['Dentro de la Chacra', 'Fuera de la Chacra'],
+            'Toneladas': [venta_dentro_chacra_ton, venta_fuera_chacra_ton]
+        }
+        df_ventas_chacra = pd.DataFrame(data)
+        fig = px.pie(df_ventas_chacra, values='Toneladas', names='Lugar de Venta',
+                     title="Ventas Dentro y Fuera de la Chacra (ton)")
+
+    return fig
+
+
 @app.callback(
     Output('ventas-entidad-bar-chart', 'figure'),
     [Input('departamento-dropdown', 'value'),
@@ -711,6 +832,10 @@ def update_destino_produccion_chart(selected_departamento, selected_provincia, s
 @app.callback(
     [
         Output("collapse", "is_open"),
+        Output("acceso-credito-collapse", "is_open"),
+        Output("asociatividad-collapse", "is_open"),
+        Output("insumos-collapse", "is_open"),
+        Output("capacitacion-collapse", "is_open"),
         Output("maquinaria-collapse", "is_open"),
         Output("cultivo-losses-collapse", "is_open")
     ],
@@ -719,10 +844,506 @@ def update_destino_produccion_chart(selected_departamento, selected_provincia, s
 @cache.memoize(timeout=3600 * 6)
 def update_graph_visibility(selected_graph_set):
     return [
-        selected_graph_set == 'prod_uso_venta',  # Collapse for Producción - Uso y Destinos de Venta  # Collapse for Servicios Financieros       # Collapse for AsociatividadCollapse for Capacitación y Asistencia Técnica        # Collapse for Mapa Coroplético
+        selected_graph_set == 'prod_uso_venta',  # Collapse for Producción - Uso y Destinos de Venta
+        selected_graph_set == 'servicios_financieros',  # Collapse for Servicios Financieros
+        selected_graph_set == 'asociatividad',          # Collapse for Asociatividad
+        selected_graph_set == 'uso_insumos',            # Collapse for Uso de insumos
+        selected_graph_set == 'capacitacion_asistencia',# Collapse for Capacitación y Asistencia Técnica        # Collapse for Mapa Coroplético
         selected_graph_set == 'maquinaria_equipos',
         selected_graph_set == 'cultivo_losses'      
     ]
+
+@app.callback(
+    Output('acceso-credito-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_acceso_credito_chart(departamento, provincia, distrito, toggle_state, region):
+    # Filter df_cap900 based on selected area
+    filtered_df = df_cap900.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:  # Filter based on selected 'REGION'
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+
+    if 'toggle' in toggle_state:
+        # Logic for generating the stacked bar chart based on Total_Ha
+        nivel_agregacion = 'NOMBREDI' if distrito else 'NOMBREPV' if provincia else 'NOMBREDD'
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            no_count = range_df[range_df['P901'] == 'No']['FACTOR'].sum()
+            si_count = range_df[range_df['P901'] == 'Sí']['FACTOR'].sum()
+            total = no_count + si_count
+            prop_no = no_count / total * 100 if total > 0 else 0
+            prop_si = si_count / total * 100 if total > 0 else 0
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'No': prop_no,
+                'Sí': prop_si
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['No', 'Sí'],
+            title="¿Solicitó un crédito? por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True
+        )
+        fig.update_traces(texttemplate='%{y:.2f}%', textposition='inside')
+    else:
+        # Logic for the default state without the toggle
+        no_count = filtered_df[filtered_df['P901'] == 'No']['FACTOR'].sum()
+        si_count = filtered_df[filtered_df['P901'] == 'Sí']['FACTOR'].sum()
+        total = no_count + si_count
+        prop_no = no_count / total * 100 if total > 0 else 0
+        prop_si = si_count / total * 100 if total > 0 else 0
+        values = [prop_no, prop_si]
+        labels = ['No', 'Sí']
+        fig = px.pie(names=labels, values=values, title="¿Solicitó un crédito?")
+
+    return fig
+
+
+@app.callback(
+    Output('obtencion-credito-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_obtencion_credito_chart(departamento, provincia, distrito, toggle_state, region):
+    # Filter df_cap900 based on selected area
+    filtered_df = df_cap900.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:  # Filter based on selected 'REGION'
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+
+    if 'toggle' in toggle_state:
+        # Logic for generating the stacked bar chart based on Total_Ha
+        nivel_agregacion = 'NOMBREDI' if distrito else 'NOMBREPV' if provincia else 'NOMBREDD'
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            no_count = range_df[range_df['P902'] == 'No']['FACTOR'].sum()
+            si_count = range_df[range_df['P902'] == 'Sí']['FACTOR'].sum()
+            total = no_count + si_count
+            prop_no = (no_count / total) * 100 if total > 0 else 0
+            prop_si = (si_count / total) * 100 if total > 0 else 0
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'No': prop_no,
+                'Sí': prop_si
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['No', 'Sí'],
+            title="¿Obtuvo el crédito? por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True
+        )
+        fig.update_traces(texttemplate='%{y:.2f}%', textposition='inside')
+    else:
+        # Logic for the default state without the toggle
+        no_count = filtered_df[filtered_df['P902'] == 'No']['FACTOR'].sum()
+        si_count = filtered_df[filtered_df['P902'] == 'Sí']['FACTOR'].sum()
+        total = no_count + si_count
+        prop_no = (no_count / total) * 100 if total > 0 else 0
+        prop_si = (si_count / total) * 100 if total > 0 else 0
+        values = [prop_no, prop_si]
+        labels = ['No', 'Sí']
+        fig = px.pie(names=labels, values=values, title="¿Obtuvo el crédito?")
+
+    return fig
+
+@app.callback(
+    Output('seguro-agricola-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_seguro_agricola_chart(departamento, provincia, distrito, toggle_state, region):
+    # Filter df_cap900 based on selected area
+    filtered_df = df_cap900.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:  # Filter based on selected 'REGION'
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    if 'toggle' in toggle_state:
+        # Logic for generating the stacked bar chart based on Total_Ha
+        nivel_agregacion = 'NOMBREDI' if distrito else 'NOMBREPV' if provincia else 'NOMBREDD'
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            no_count = range_df[range_df['P905'] == 'No']['FACTOR'].sum()
+            si_count = range_df[range_df['P905'] == 'Sí']['FACTOR'].sum()
+            total = no_count + si_count
+            prop_no = no_count / total * 100 if total > 0 else 0
+            prop_si = si_count / total * 100 if total > 0 else 0
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'No': prop_no,
+                'Sí': prop_si
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['No', 'Sí'],
+            title="¿Accedió a un seguro agrícola? por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True
+        )
+        fig.update_traces(texttemplate='%{y:.2f}%', textposition='inside')
+    else:
+        # Logic for the default state without the toggle
+        no_count = filtered_df[filtered_df['P905'] == 'No']['FACTOR'].sum()
+        si_count = filtered_df[filtered_df['P905'] == 'Sí']['FACTOR'].sum()
+        total = no_count + si_count
+        prop_no = no_count / total * 100 if total > 0 else 0
+        prop_si = si_count / total * 100 if total > 0 else 0
+        values = [prop_no, prop_si]
+        labels = ['No', 'Sí']
+        fig = px.pie(names=labels, values=values, title="¿Accedió a un seguro agrícola?")
+        fig.update_traces(textinfo='percent')
+
+    return fig
+
+@app.callback(
+    Output('proveedor-seguro-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_proveedor_seguro_chart(departamento, provincia, distrito, toggle_state, region):
+    # Filter df_cap900 based on selected area
+    filtered_df = df_cap900.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    if 'toggle' in toggle_state:
+        # Logic for generating the stacked bar chart based on Total_Ha
+        nivel_agregacion = 'NOMBREDI' if distrito else 'NOMBREPV' if provincia else 'NOMBREDD'
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            counts = range_df.groupby('P906')['FACTOR'].sum()
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'Ministerio de Desarrollo Agrario y Riego': counts.get('Ministerio de Desarrollo Agrario y Riego', 0),
+                'Empresa aseguradora': counts.get('Empresa aseguradora', 0),
+                'Banca privada': counts.get('Banca privada', 0),
+                'AGROBANCO': counts.get('AGROBANCO', 0)
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['Ministerio de Desarrollo Agrario y Riego', 'Empresa aseguradora', 'Banca privada', 'AGROBANCO'],
+            title="¿Quién le proporcionó el seguro? por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True
+        )
+    else:
+        # Logic for the default state without the toggle
+        counts = filtered_df.groupby('P906')['FACTOR'].sum()
+        values = [counts.get('Ministerio de Desarrollo Agrario y Riego', 0), counts.get('Empresa aseguradora', 0), counts.get('Banca privada', 0), counts.get('AGROBANCO', 0)]
+        labels = ['Ministerio de Desarrollo Agrario y Riego', 'Empresa aseguradora', 'Banca privada', 'AGROBANCO']
+        fig = px.pie(names=labels, values=values, title="¿Quién le proporcionó el seguro?")
+
+    return fig
+
+@app.callback(
+    Output('entidad-credito-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_entidad_credito_chart(departamento, provincia, distrito, toggle_state, region):
+    filtered_df = df_cap900.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    credit_providers = [
+        'AGROBANCO', 'Caja Municipal', 'Caja Rural', 'Banca privada', 'Financiera/EDPYME',
+        'Organismo No Gubernamental (ONG)', 'Cooperativa', 'Establecimiento comercial',
+        'Prestamista/Habilitador', 'Programas del Estado', 'Otro'
+    ]
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            counts = {provider: range_df[range_df[f'P903_{i + 1}'] == provider]['FACTOR'].sum() for i, provider in
+                      enumerate(credit_providers)}
+            counts['Hectare Range'] = f'{lower}-{upper}'
+            hectare_range_data.append(counts)
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=credit_providers,
+            title="¿Quién le proporcionó el crédito? por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True
+        )
+    else:
+        overall_counts = {provider: filtered_df[filtered_df[f'P903_{i + 1}'] == provider]['FACTOR'].sum() for
+                          i, provider in enumerate(credit_providers)}
+        fig = px.pie(names=list(overall_counts.keys()), values=list(overall_counts.values()),
+                     title="¿Quién le proporcionó el crédito?")
+
+    return fig
+
+
+@app.callback(
+    Output('razones-rechazo-credito-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_razones_rechazo_credito_chart(departamento, provincia, distrito, toggle_state, region):
+    filtered_df = df_cap900.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    specified_reasons = [
+        'Por falta de garantía',
+        'Incumplimiento de pagos anteriores',
+        'Por no tener título de propiedad de la tierra (parcela)',
+        'Actividad agropecuaria con alto riesgo'
+    ]
+
+    # Function to categorize reasons
+    def categorize_reason(row):
+        if row in specified_reasons:
+            return row
+        elif pd.notna(row):
+            return 'Otras'
+        else:
+            return 'No especificado'
+
+    # Apply categorization
+    filtered_df['Categorized_Reason'] = filtered_df['P904A'].apply(categorize_reason)
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            counts = range_df.groupby('Categorized_Reason')['FACTOR'].sum().to_dict()
+            counts['Hectare Range'] = f'{lower}-{upper}'
+            hectare_range_data.append(counts)
+
+        plot_df = pd.DataFrame(hectare_range_data).fillna(0)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=specified_reasons + ['Otras'],
+            title="Razones para Rechazo de Crédito por Rango de Hectáreas Cultivadas (Con Factor)",
+            barmode='stack',
+            text_auto=True
+        )
+    else:
+        counts = filtered_df.groupby('Categorized_Reason')['FACTOR'].sum().to_dict()
+        fig = px.pie(names=list(counts.keys()), values=list(counts.values()),
+                     title="Razones para Rechazo de Crédito (Con Factor)")
+
+    return fig
+
+
+@app.callback(
+    Output('asociatividad-chart', 'figure'),
+    [
+        Input('departamento-dropdown', 'value'),
+        Input('provincia-dropdown', 'value'),
+        Input('distrito-dropdown', 'value'),
+        Input('chart-toggle', 'value'),
+        Input('cultivo-dropdown', 'value'),
+        Input('region-dropdown', 'value')
+    ]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_asociatividad_chart(departamento, provincia, distrito, toggle_state, selected_cultivo, region):
+    # Start with the merged DataFrame that includes the 'cultivo' dummy columns
+    filtered_df = df_cap800.copy()
+
+    # Apply filters based on selected departamento, provincia, and distrito
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+
+    # Filter by the selected 'cultivo' if one is selected
+    if selected_cultivo:
+        filtered_df = filtered_df[filtered_df[selected_cultivo] == 1]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            si_count = range_df[range_df['P801'] == 'Sí']['FACTOR'].sum()
+            no_count = range_df[range_df['P801'] == 'No']['FACTOR'].sum()
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'Sí': si_count,
+                'No': no_count
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['Sí', 'No'],
+            title="Asociatividad por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True
+        )
+    else:
+        si_count = filtered_df[filtered_df['P801'] == 'Sí']['FACTOR'].sum()
+        no_count = filtered_df[filtered_df['P801'] == 'No']['FACTOR'].sum()
+        fig = px.pie(names=['Sí', 'No'], values=[si_count, no_count], title="Asociatividad")
+
+    return fig
+
+@app.callback(
+    Output('razones-no-asociatividad-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_razones_no_asociatividad_chart(departamento, provincia, distrito, toggle_state, region):
+    filtered_df = df_cap800.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]  
+
+    # Define the reasons for no asociatividad
+    no_asociatividad_reasons = {
+        'P809A_1': 'Por desconfianza',
+        'P809A_2': 'No hay disponibilidad de cooperativas en la zona',
+        'P809A_3': 'Por desconocimiento',
+        'P809A_4': 'No considera útil asociarse',
+        'P809A_5': 'Pérdida de ingresos por pago de impuestos',
+        'P809A_6': 'Otro'
+    }
+
+    # Function to categorize reasons
+    def categorize_reason(row):
+        for code, reason in no_asociatividad_reasons.items():
+            if row[code] == reason:  # If the reason is marked as true
+                return reason
+        return 'No especificado'  # Use this if no reason is marked
+
+    # Apply categorization
+    filtered_df['Categorized_Reason'] = filtered_df.apply(categorize_reason, axis=1)
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            counts = range_df.groupby('Categorized_Reason')['FACTOR'].sum().to_dict()
+            counts['Hectare Range'] = f'{lower}-{upper}'
+            hectare_range_data.append(counts)
+
+        # After grouping and summing, make sure to fill missing reasons with zeros
+        for hectare_info in hectare_range_data:
+            for reason in no_asociatividad_reasons.values():
+                if reason not in hectare_info:
+                    hectare_info[reason] = 0  # Set missing reasons to zero
+
+        # Then create your DataFrame
+        plot_df = pd.DataFrame(hectare_range_data)
+
+        # Now plot_df has consistent data and can be used in px.bar
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=list(no_asociatividad_reasons.values()) + ['No especificado'],
+            title="Razones de No Asociatividad por Rango de Hectáreas Cultivadas",
+            barmode='stack',
+            text_auto=True,
+            labels={'variable': 'Razón', 'value': 'FACTOR'}
+        )
+    else:
+        counts = filtered_df.groupby('Categorized_Reason')['FACTOR'].sum().to_dict()
+        fig = px.pie(names=list(counts.keys()), values=list(counts.values()),
+                     title="Razones de No Asociatividad")
+
+    return fig
+
+
 
 @app.callback(
     Output('selling-vs-non-selling-chart', 'figure'),
@@ -803,6 +1424,187 @@ def update_selling_chart(selected_departamento, selected_provincia, selected_dis
             yaxis_title='',
             showlegend=False
         )
+
+    return fig
+
+@app.callback(
+    Output('insumos-usage-chart', 'figure'),
+    [
+        Input('departamento-dropdown', 'value'),
+        Input('provincia-dropdown', 'value'),
+        Input('distrito-dropdown', 'value'),
+        Input('chart-toggle', 'value'),
+        Input('insumos-selection-dropdown', 'value'),
+        Input('region-dropdown', 'value')
+    ]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_insumos_usage_chart(departamento, provincia, distrito, toggle_state, selected_insumos, region):
+    # Load and merge data
+    df_cap300ab = pd.read_stata('C:\\UC\\RIMISP\\Encuestas Perú\\2019\\2022\\1744 - BPA\\08_Cap300ab.dta')
+    relevant_columns_df = df[['CONGLOMERADO', 'NSELUA', 'UA', 'Total_Ha']].drop_duplicates()
+    merged_df = pd.merge(df_cap300ab, relevant_columns_df, on=['CONGLOMERADO', 'NSELUA', 'UA'], how='left')
+
+    # Apply filters
+    if departamento:
+        merged_df = merged_df[merged_df['NOMBREDD'] == departamento]
+    if provincia:
+        merged_df = merged_df[merged_df['NOMBREPV'] == provincia]
+    if distrito:
+        merged_df = merged_df[merged_df['NOMBREDI'] == distrito]
+    if region:
+        merged_df = merged_df[merged_df['REGION'] == region]
+
+    # Logic to handle the selected insumos
+    if selected_insumos:
+        # Initialize counts for each hectare range
+        range_counts = {range_val: {'Sí': 0, 'No': 0} for range_val in hectare_ranges}
+
+        for lower, upper in hectare_ranges:
+            for index, row in merged_df.iterrows():
+                if row['Total_Ha'] >= lower and row['Total_Ha'] < upper:
+                    if all(row[insumo] == 'Sí' for insumo in selected_insumos):
+                        range_counts[(lower, upper)]['Sí'] += row['FACTOR']
+                    else:
+                        range_counts[(lower, upper)]['No'] += row['FACTOR']
+
+        # Prepare data for the chart
+        chart_data = []
+        for range_val, counts in range_counts.items():
+            chart_data.append({'Hectare Range': f'{range_val[0]}-{range_val[1]}', 'Insumos': 'Sí', 'Count': counts['Sí']})
+            chart_data.append({'Hectare Range': f'{range_val[0]}-{range_val[1]}', 'Insumos': 'No', 'Count': counts['No']})
+        chart_df = pd.DataFrame(chart_data)
+
+        # Create the figure based on the toggle state
+        if 'toggle' in toggle_state:
+            # Stacked bar chart
+            fig = px.bar(chart_df, x='Hectare Range', y='Count', color='Insumos', title="Uso de Insumos por Rango de Hectáreas", barmode='stack')
+        else:
+            # Pie chart (overall usage without considering hectare ranges)
+            total_si = sum(counts['Sí'] for _, counts in range_counts.items())
+            total_no = sum(counts['No'] for _, counts in range_counts.items())
+            fig = px.pie(names=['Sí', 'No'], values=[total_si, total_no], title="Uso de Insumos General")
+    else:
+        # If no insumo is selected, display an empty figure
+        fig = go.Figure()
+
+    return fig
+
+@app.callback(
+    Output('capacitacion-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_capacitacion_chart(departamento, provincia, distrito, toggle_state, region):
+    # Filter df_cap700 based on selected area
+    filtered_df = df_cap700.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            si_factor_sum = range_df[range_df['P701'] == 'Sí']['FACTOR'].sum()
+            no_factor_sum = range_df[range_df['P701'] == 'No']['FACTOR'].sum()
+            total_factor_sum = si_factor_sum + no_factor_sum
+            prop_si = si_factor_sum / total_factor_sum * 100 if total_factor_sum > 0 else 0
+            prop_no = no_factor_sum / total_factor_sum * 100 if total_factor_sum > 0 else 0
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'Sí': prop_si,
+                'No': prop_no,
+                'Total Sí': si_factor_sum,
+                'Total No': no_factor_sum
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['Sí', 'No'],
+            title="Personas que Recibieron Capacitación en los últimos 12 meses por Rango de Hectáreas Cultivadas",
+            text_auto=True
+        )
+
+        fig.update_layout(barmode='stack')
+        fig.update_traces(texttemplate='%{y:.2f}%', textposition='inside')
+    else:
+        si_count = filtered_df[filtered_df['P701'] == 'Sí']['FACTOR'].sum()
+        no_count = filtered_df[filtered_df['P701'] == 'No']['FACTOR'].sum()
+        total_count = si_count + no_count
+        prop_si = si_count / total_count * 100 if total_count > 0 else 0
+        prop_no = no_count / total_count * 100 if total_count > 0 else 0
+        fig = px.pie(names=['Sí', 'No'], values=[prop_si, prop_no], title="¿Recibió capacitación en los últimos 12 meses?")
+
+    return fig
+
+@app.callback(
+    Output('asistencia-chart', 'figure'),
+    [Input('departamento-dropdown', 'value'),
+     Input('provincia-dropdown', 'value'),
+     Input('distrito-dropdown', 'value'),
+     Input('chart-toggle', 'value'),
+     Input('region-dropdown', 'value')]
+)
+@cache.memoize(timeout=3600 * 6)
+def update_asistencia_chart(departamento, provincia, distrito, toggle_state, region):
+    # Filter df_cap700 based on selected area
+    filtered_df = df_cap700.copy()
+    if departamento:
+        filtered_df = filtered_df[filtered_df['NOMBREDD'] == departamento]
+    if provincia:
+        filtered_df = filtered_df[filtered_df['NOMBREPV'] == provincia]
+    if distrito:
+        filtered_df = filtered_df[filtered_df['NOMBREDI'] == distrito]
+    if region:
+        filtered_df = filtered_df[filtered_df['REGION'] == region]
+
+    if 'toggle' in toggle_state:
+        hectare_range_data = []
+        for lower, upper in hectare_ranges:
+            range_df = filtered_df[(filtered_df['Total_Ha'] >= lower) & (filtered_df['Total_Ha'] < upper)]
+            si_factor_sum = range_df[range_df['P704'] == 'Sí']['FACTOR'].sum()
+            no_factor_sum = range_df[range_df['P704'] == 'No']['FACTOR'].sum()
+            total_factor_sum = si_factor_sum + no_factor_sum
+            prop_si = si_factor_sum / total_factor_sum * 100 if total_factor_sum > 0 else 0
+            prop_no = no_factor_sum / total_factor_sum * 100 if total_factor_sum > 0 else 0
+            hectare_range_data.append({
+                'Hectare Range': f'{lower}-{upper}',
+                'Sí': prop_si,
+                'No': prop_no,
+                'Total Sí': si_factor_sum,
+                'Total No': no_factor_sum
+            })
+
+        plot_df = pd.DataFrame(hectare_range_data)
+        fig = px.bar(
+            plot_df,
+            x='Hectare Range',
+            y=['Sí', 'No'],
+            title="Personas que Recibieron Asistencia Técnica en los últimos 12 meses por Rango de Hectáreas Cultivadas",
+            text_auto=True
+        )
+
+        fig.update_layout(barmode='stack')
+        fig.update_traces(texttemplate='%{y:.2f}%', textposition='inside')
+    else:
+        si_count = filtered_df[filtered_df['P704'] == 'Sí']['FACTOR'].sum()
+        no_count = filtered_df[filtered_df['P704'] == 'No']['FACTOR'].sum()
+        total_count = si_count + no_count
+        prop_si = si_count / total_count * 100 if total_count > 0 else 0
+        prop_no = no_count / total_count * 100 if total_count > 0 else 0
+        fig = px.pie(names=['Sí', 'No'], values=[prop_si, prop_no], title="¿Recibió capacitación en los últimos 12 meses?")
 
     return fig
 
@@ -2103,4 +2905,3 @@ def update_dias_contribution_table(departamento, provincia, distrito, region):
 # Ejecutar aplicación
 if __name__ == '__main__':
     app.run_server(debug=True)
-

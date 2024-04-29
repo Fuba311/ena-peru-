@@ -1,8 +1,8 @@
 pandas
 pyarrow
 plotly
-dash==2.7.0
-dash-bootstrap-components==1.5.0
+dash
+dash-bootstrap-components
 flask_caching
 geopandas
 gunicorn
